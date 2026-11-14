@@ -14,6 +14,9 @@ public class LoginController : MonoBehaviour
     public GameObject panelLogin;
     public GameObject panelDashboard;
 
+    [Header("Feedback de Error (Opcional)")]
+    public TMP_Text txtMensajeError;
+
     private void Start()
     {
         Debug.Log("[LoginController] Script iniciado correctamente.");
@@ -61,12 +64,17 @@ public class LoginController : MonoBehaviour
         }
 
         // 4. Ejecución del Login
-        PortalBridgeManager.Instance.IniciarSesion(email, password, (exito, rol) =>
+        PortalBridgeManager.Instance.IniciarSesion(email, password, (exito, mensajeORol) =>
         {
-            Debug.Log($"[LoginController] Respuesta del Puente -> Éxito: {exito}, Rol: {rol}");
+            Debug.Log($"[LoginController] Respuesta del Puente -> Éxito: {exito}, Detalle: {mensajeORol}");
 
             if (exito)
             {
+                if (txtMensajeError != null)
+                {
+                    txtMensajeError.gameObject.SetActive(false);
+                }
+
                 if (panelLogin != null)
                 {
                     panelLogin.SetActive(false);
@@ -85,6 +93,15 @@ public class LoginController : MonoBehaviour
                 else
                 {
                     Debug.LogError("[LoginController] ERROR: 'panelDashboard' está vacío en el Inspector.");
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"[LoginController] Error de inicio de sesión: {mensajeORol}");
+                if (txtMensajeError != null)
+                {
+                    txtMensajeError.gameObject.SetActive(true);
+                    txtMensajeError.text = mensajeORol;
                 }
             }
         });

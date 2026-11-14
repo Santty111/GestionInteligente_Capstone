@@ -10,3 +10,4 @@ Proyecto de Unity desarrollado para titulación / Capstone.
 - `Assets/`: Contiene escenas, scripts, prefabs, arte y recursos del proyecto.
 - `Packages/`: Dependencias y paquetes del Package Manager de Unity.
 - `ProjectSettings/`: Configuraciones de proyecto y ajustes del motor.
+

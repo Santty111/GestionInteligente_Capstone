@@ -139,11 +139,19 @@ public class Mision1DashboardController : MonoBehaviour
         PlayerPrefs.SetFloat("Mision1_CostoTotal", costoTotal);
         PlayerPrefs.Save();
 
+        string estudianteActual = (PortalBridgeManager.Instance != null && PortalBridgeManager.Instance.usuarioActual != null && !string.IsNullOrEmpty(PortalBridgeManager.Instance.usuarioActual.codigoInstitucional))
+            ? PortalBridgeManager.Instance.usuarioActual.codigoInstitucional
+            : "UDLA-EST-0001";
+
+        string nombreEscenarioActual = (PortalBridgeManager.Instance != null && PortalBridgeManager.Instance.escenarioActivo != null && !string.IsNullOrEmpty(PortalBridgeManager.Instance.escenarioActivo.nombreRuta))
+            ? PortalBridgeManager.Instance.escenarioActivo.nombreRuta
+            : "Importación Marítima - Asia a GYE";
+
         // Enviar a la Base de Datos Local / API
         DatosPartida resultadoMision = new DatosPartida
         {
-            idEstudiante = "UDLA-EST-0002", // Podrás conectar esto a la sesión de tu login posteriormente
-            escenario = "Importación Marítima - Asia a GYE",
+            idEstudiante = estudianteActual,
+            escenario = nombreEscenarioActual,
             nivel = "Nivel 1",
             fecha = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
             puntajeGlobal = puntajeGlobal,
@@ -158,9 +166,26 @@ public class Mision1DashboardController : MonoBehaviour
         {
             DatabaseManager.Instancia.GuardarResultadoLocal(resultadoMision);
         }
+        else if (PortalBridgeManager.Instance != null)
+        {
+            var resultadoDto = new ResultadoPartidaDto
+            {
+                nombreEstudiante = PortalBridgeManager.Instance.usuarioActual?.nombre ?? "Estudiante",
+                ruta = resultadoMision.escenario,
+                dificultad = "facil",
+                costoTotal = resultadoMision.costoTotal,
+                entregasATiempoPct = resultadoMision.entregasATiempo,
+                utilizacionRecursosPct = resultadoMision.utilizacionRecursos,
+                eficienciaRutasPct = resultadoMision.eficienciaRutas,
+                eventoAduanaSuperado = true,
+                puntajeFinal = Mathf.RoundToInt(resultadoMision.puntajeGlobal),
+                fecha = resultadoMision.fecha
+            };
+            PortalBridgeManager.Instance.GuardarResultadoPartida(resultadoDto);
+        }
         else
         {
-            Debug.LogWarning("[Dashboard] DatabaseManager no encontrado en la escena. Asegúrate de tener el objeto GameManager.");
+            Debug.LogWarning("[Dashboard] No se encontró gestor de base de datos para guardar la partida.");
         }
 
         if (rutinaAnimacion != null)
