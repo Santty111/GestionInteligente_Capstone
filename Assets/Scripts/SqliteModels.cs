@@ -15,6 +15,8 @@ public class UsuarioLocal
     public string CodigoInstitucional { get; set; }
     public string UltimoAcceso { get; set; }
     public int BienvenidaCompletada { get; set; } // 0 = Pendiente (Nuevo), 1 = Completada (Ya ingresado)
+    public string PasswordHash { get; set; } // Hash de contraseña para inicio de sesión offline
+    public string EstudianteIdGuid { get; set; } // Identificador UUID en tabla estudiantes
 }
 
 [Table("escenarios")]

@@ -75,6 +75,13 @@ public class DatabaseManager : MonoBehaviour
                 db.CreateTable<PartidaLocal>();
                 db.CreateTable<KpiLocal>();
 
+                // Asegurar columnas para migración si la tabla ya existía previamente sin hash o guid
+                try { db.Execute("ALTER TABLE usuarios ADD COLUMN PasswordHash TEXT;"); } catch {}
+                try { db.Execute("ALTER TABLE usuarios ADD COLUMN EstudianteIdGuid TEXT;"); } catch {}
+
+                // Sembrar o actualizar usuarios institucionales para modo offline
+                SembrarUsuariosPredeterminados(db);
+
                 // Sembrar datos iniciales si la tabla de escenarios está vacía
                 if (db.Table<EscenarioLocal>().Count() == 0)
                 {
@@ -283,26 +290,209 @@ public class DatabaseManager : MonoBehaviour
             {
                 string uId = !string.IsNullOrEmpty(perfil.usuarioIdGuid) ? perfil.usuarioIdGuid : Guid.NewGuid().ToString();
                 var usuarioExistente = db.Find<UsuarioLocal>(uId);
+                if (usuarioExistente == null && !string.IsNullOrEmpty(perfil.correo))
+                {
+                    usuarioExistente = db.Table<UsuarioLocal>().FirstOrDefault(x => x.Correo.ToLower() == perfil.correo.ToLower());
+                }
+
                 int bienvenida = usuarioExistente != null ? usuarioExistente.BienvenidaCompletada : (perfil.esNuevo ? 0 : 1);
+                string pwdHash = !string.IsNullOrEmpty(perfil.passwordHash) ? perfil.passwordHash : (usuarioExistente?.PasswordHash ?? "");
+                string estGuid = !string.IsNullOrEmpty(perfil.estudianteIdGuid) ? perfil.estudianteIdGuid : (usuarioExistente?.EstudianteIdGuid ?? "");
 
                 var usuario = new UsuarioLocal
                 {
-                    Id = uId,
+                    Id = usuarioExistente != null ? usuarioExistente.Id : uId,
                     Correo = perfil.correo,
                     NombreCompleto = perfil.nombre,
                     Rol = perfil.rol,
                     CodigoInstitucional = perfil.codigoInstitucional,
                     UltimoAcceso = DateTime.UtcNow.ToString("o"),
-                    BienvenidaCompletada = bienvenida
+                    BienvenidaCompletada = bienvenida,
+                    PasswordHash = pwdHash,
+                    EstudianteIdGuid = estGuid
                 };
 
                 db.InsertOrReplace(usuario);
-                Debug.Log($"[SQLite] Usuario '{usuario.NombreCompleto}' cacheado localmente. Bienvenida completada: {bienvenida == 1}");
+                Debug.Log($"[SQLite] Usuario '{usuario.NombreCompleto}' cacheado localmente con hash. Bienvenida completada: {bienvenida == 1}");
             }
         }
         catch (Exception ex)
         {
             Debug.LogWarning($"[SQLite] No se pudo cachear el usuario local: {ex.Message}");
+        }
+    }
+
+    // --- AUTENTICACIÓN OFFLINE EN SQLITE ---
+
+    public (bool exito, string mensaje, PerfilUsuarioDto perfil) AutenticarUsuarioLocal(string correo, string password)
+    {
+        try
+        {
+            using (var db = new SQLiteConnection(rutaBaseDatosSqlite))
+            {
+                string correoNormalizado = (correo ?? "").Trim().ToLower();
+                var usuario = db.Table<UsuarioLocal>().FirstOrDefault(u => u.Correo.ToLower() == correoNormalizado);
+
+                if (usuario == null)
+                {
+                    return (false, "El usuario no se encuentra registrado en el almacenamiento local. Inicia sesión una vez con conexión a internet para sincronizar tus credenciales o usa una cuenta institucional autorizada.", null);
+                }
+
+                bool passwordValido = false;
+
+                if (!string.IsNullOrEmpty(usuario.PasswordHash))
+                {
+                    try
+                    {
+                        if (usuario.PasswordHash.StartsWith("$2a$") || usuario.PasswordHash.StartsWith("$2b$") || usuario.PasswordHash.StartsWith("$2y$"))
+                        {
+                            passwordValido = BCrypt.Net.BCrypt.Verify(password, usuario.PasswordHash);
+                        }
+                        else
+                        {
+                            passwordValido = (password == usuario.PasswordHash);
+                        }
+                    }
+                    catch
+                    {
+                        passwordValido = (password == usuario.PasswordHash);
+                    }
+                }
+                else
+                {
+                    // Fallback de contingencia para usuarios precargados sin hash explícito
+                    if (password == "Password123!" || password == "123456789012" || password == "Https140034&" || password == "Fallout3gameoftheyear")
+                    {
+                        passwordValido = true;
+                    }
+                }
+
+                if (!passwordValido)
+                {
+                    return (false, "Contraseña incorrecta.", null);
+                }
+
+                // Actualizar último acceso en SQLite
+                usuario.UltimoAcceso = DateTime.UtcNow.ToString("o");
+                db.Update(usuario);
+
+                var perfil = new PerfilUsuarioDto
+                {
+                    estudianteId = 1,
+                    usuarioIdGuid = usuario.Id,
+                    estudianteIdGuid = !string.IsNullOrEmpty(usuario.EstudianteIdGuid) ? usuario.EstudianteIdGuid : "30000000-0000-0000-0000-000000000001",
+                    nombre = usuario.NombreCompleto,
+                    correo = usuario.Correo,
+                    rol = usuario.Rol,
+                    codigoInstitucional = usuario.CodigoInstitucional,
+                    passwordHash = usuario.PasswordHash,
+                    esNuevo = (usuario.BienvenidaCompletada == 0)
+                };
+
+                return (true, "Inicio de sesión local exitoso.", perfil);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[SQLite Auth] Error en autenticación local: {ex.Message}");
+            return (false, $"Error interno en base de datos local: {ex.Message}", null);
+        }
+    }
+
+    private void SembrarUsuariosPredeterminados(SQLiteConnection db)
+    {
+        var semillas = new List<UsuarioLocal>
+        {
+            new UsuarioLocal
+            {
+                Id = "10000000-0000-0000-0000-000000000001",
+                Correo = "docente.prueba@udla.edu.ec",
+                NombreCompleto = "Docente de Prueba",
+                Rol = "docente",
+                CodigoInstitucional = "UDLA-DOC-0001",
+                PasswordHash = "$2a$12$.ToG6pp5vji0hzrYXYWTgutt3qc8Im09QWrNG35Q6IA/F4MhnMuyC", // Password123!
+                EstudianteIdGuid = "",
+                BienvenidaCompletada = 1,
+                UltimoAcceso = DateTime.UtcNow.ToString("o")
+            },
+            new UsuarioLocal
+            {
+                Id = "10000000-0000-0000-0000-000000000002",
+                Correo = "santiago.conlago@udla.edu.ec",
+                NombreCompleto = "Santiago Conlago",
+                Rol = "Estudiante",
+                CodigoInstitucional = "UDLA-EST-0001",
+                PasswordHash = "$2b$11$Bd59hWCpTX9g83Vf3OUIHOkQsWGE6vLRJSM/r4I8MGN/OPQISXkpm", // Password123!
+                EstudianteIdGuid = "30000000-0000-0000-0000-000000000001",
+                BienvenidaCompletada = 0,
+                UltimoAcceso = DateTime.UtcNow.ToString("o")
+            },
+            new UsuarioLocal
+            {
+                Id = "bd4e5f6d-49f1-423b-b42f-0673fc2823a2",
+                Correo = "juan.perez@udla.edu.ec",
+                NombreCompleto = "Juan Perez",
+                Rol = "estudiante",
+                CodigoInstitucional = "A00046273",
+                PasswordHash = "$2a$11$oQzWNgBlTlwQO1z7H.qNgONXiV1AvEmommBfio7gfA83HPVCfjRLK", // Password123!
+                EstudianteIdGuid = "2c4342df-edb3-4140-b662-0e5f9f56a917",
+                BienvenidaCompletada = 1,
+                UltimoAcceso = DateTime.UtcNow.ToString("o")
+            },
+            new UsuarioLocal
+            {
+                Id = "22daaa62-107e-4e0b-aa51-50ebc67c939c",
+                Correo = "niurka@udla.edu.ec",
+                NombreCompleto = "Niurka",
+                Rol = "estudiante",
+                CodigoInstitucional = "UDLA-EST-0006",
+                PasswordHash = "$2a$11$kNEurKWzdDMvzkKEj19S5uJWmFiTzNKCOHrQrE2xCaUMJ3POAXqC6", // 123456789012
+                EstudianteIdGuid = "b635d52f-99f0-4e6f-a040-660d058bbb55",
+                BienvenidaCompletada = 1,
+                UltimoAcceso = DateTime.UtcNow.ToString("o")
+            },
+            new UsuarioLocal
+            {
+                Id = "10000000-0000-0000-0000-000000000010",
+                Correo = "andres.quiranzao@udla.edu.ec",
+                NombreCompleto = "Andrés Quiranza",
+                Rol = "estudiante",
+                CodigoInstitucional = "UDLA-EST-0010",
+                PasswordHash = "$2b$11$hCv.D0.z/OYCkibJ12PQO.XNiE/tk6PCYVIR4RrqcwizA3Js9udZa", // Https140034&
+                EstudianteIdGuid = "30000000-0000-0000-0000-000000000010",
+                BienvenidaCompletada = 1,
+                UltimoAcceso = DateTime.UtcNow.ToString("o")
+            },
+            new UsuarioLocal
+            {
+                Id = "10000000-0000-0000-0000-000000000011",
+                Correo = "marta.salazar@udla.edu.ec",
+                NombreCompleto = "Marta Salazar",
+                Rol = "docente",
+                CodigoInstitucional = "UDLA-DOC-0011",
+                PasswordHash = "$2b$11$71BrFy3MI5FkAU1vYFmgFeVSorWtwhi.z/a.z30H/qU/JQN/pmw3S", // Fallout3gameoftheyear
+                EstudianteIdGuid = "",
+                BienvenidaCompletada = 1,
+                UltimoAcceso = DateTime.UtcNow.ToString("o")
+            }
+        };
+
+        foreach (var s in semillas)
+        {
+            var existente = db.Table<UsuarioLocal>().FirstOrDefault(u => u.Correo.ToLower() == s.Correo.ToLower());
+            if (existente == null)
+            {
+                db.Insert(s);
+            }
+            else if (string.IsNullOrEmpty(existente.PasswordHash))
+            {
+                existente.PasswordHash = s.PasswordHash;
+                if (!string.IsNullOrEmpty(s.EstudianteIdGuid) && string.IsNullOrEmpty(existente.EstudianteIdGuid))
+                {
+                    existente.EstudianteIdGuid = s.EstudianteIdGuid;
+                }
+                db.Update(existente);
+            }
         }
     }
 

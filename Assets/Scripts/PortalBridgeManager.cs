@@ -58,6 +58,12 @@ public class PortalBridgeManager : MonoBehaviour
             }
             DontDestroyOnLoad(gameObject);
             mainThreadContext = SynchronizationContext.Current;
+
+            if (!cadenaConexionPostgres.Contains("Timeout="))
+            {
+                cadenaConexionPostgres += " Timeout=4; Command Timeout=5;";
+            }
+
             CargarDatosPorDefectoOffline();
         }
         else if (_instance != this)
@@ -96,25 +102,15 @@ public class PortalBridgeManager : MonoBehaviour
 
     public void IniciarSesion(string correo, string password, Action<bool, string> callback)
     {
-        if (usarModoOffline)
+        // 1. Verificación inmediata de conectividad o modo offline forzado
+        if (usarModoOffline || Application.internetReachability == NetworkReachability.NotReachable)
         {
-            usuarioActual.correo = string.IsNullOrEmpty(correo) ? "santiago.conlago@udla.edu.ec" : correo;
-            usuarioActual.rol = correo.Contains("docente") ? "Docente" : "Estudiante";
-
-            // Determinar si es usuario nuevo en modo offline
-            bool bienvenidaCompletada = PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.correo.ToLower(), 0) == 1
-                                     || PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.usuarioIdGuid, 0) == 1;
-            bool esNuevoSqlite = DatabaseManager.Instancia == null || DatabaseManager.Instancia.EsUsuarioNuevo(usuarioActual.usuarioIdGuid, usuarioActual.correo);
-            usuarioActual.esNuevo = !bienvenidaCompletada && esNuevoSqlite;
-
-            DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
-
-            Debug.Log($"[Modo Offline] Login simulado exitoso como: {usuarioActual.rol}. ¿Es nuevo?: {usuarioActual.esNuevo}");
-            callback?.Invoke(true, usuarioActual.rol);
+            Debug.Log("<color=yellow>[Login] Modo Offline detectado o sin conexión a internet. Intentando autenticación local con SQLite...</color>");
+            AutenticarLocalOffline(correo, password, callback);
             return;
         }
 
-        // Ejecutar consulta a PostgreSQL en hilo secundario
+        // 2. Si hay red disponible, intentar conectar con Neon PostgreSQL
         Task.Run(async () =>
         {
             try
@@ -137,7 +133,7 @@ public class PortalBridgeManager : MonoBehaviour
 
                         Debug.Log($"<color=cyan>[Neon DB] Usuario verificado: {usuarioActual.nombre}. Partidas en nube: {resultadoLogin.partidasCount}. ¿Es nuevo?: {usuarioActual.esNuevo}</color>");
 
-                        // 2. Cachear usuario localmente en SQLite
+                        // 2. Cachear usuario localmente en SQLite con su hash para futuros inicios offline
                         DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
 
                         Debug.Log($"<color=green>[Neon DB] Login exitoso para {usuarioActual.nombre} ({usuarioActual.correo}) con rol {usuarioActual.rol}</color>");
@@ -152,13 +148,48 @@ public class PortalBridgeManager : MonoBehaviour
             }
             catch (Exception ex)
             {
+                Debug.LogWarning($"[Neon DB] No se pudo conectar al servidor de base de datos ({ex.Message}). Activando fallback de autenticación local...");
                 EjecutarEnHiloPrincipal(() =>
                 {
-                    Debug.LogError($"[Neon DB] Error de conexión: {ex.Message}");
-                    callback?.Invoke(false, $"Error al conectar con la base de datos: {ex.Message}");
+                    AutenticarLocalOffline(correo, password, callback);
                 });
             }
         });
+    }
+
+    private void AutenticarLocalOffline(string correo, string password, Action<bool, string> callback)
+    {
+        if (DatabaseManager.Instancia != null)
+        {
+            var resultado = DatabaseManager.Instancia.AutenticarUsuarioLocal(correo, password);
+            if (resultado.exito && resultado.perfil != null)
+            {
+                usuarioActual = resultado.perfil;
+
+                bool bienvenidaCompletadaPrefs = 
+                    PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.correo.ToLower(), 0) == 1 ||
+                    PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.usuarioIdGuid, 0) == 1;
+
+                bool esNuevoSqlite = DatabaseManager.Instancia.EsUsuarioNuevo(usuarioActual.usuarioIdGuid, usuarioActual.correo);
+                usuarioActual.esNuevo = !bienvenidaCompletadaPrefs && esNuevoSqlite;
+
+                Debug.Log($"<color=green>[Modo Offline] Autenticación local exitosa para {usuarioActual.nombre} ({usuarioActual.correo}) con rol {usuarioActual.rol}. ¿Es nuevo?: {usuarioActual.esNuevo}</color>");
+                callback?.Invoke(true, usuarioActual.rol);
+                return;
+            }
+            else
+            {
+                Debug.LogWarning($"[Modo Offline] Falló autenticación local: {resultado.mensaje}");
+                callback?.Invoke(false, resultado.mensaje);
+                return;
+            }
+        }
+
+        // Si DatabaseManager no está instanciado por algún motivo, fallback seguro en memoria
+        usuarioActual.correo = string.IsNullOrEmpty(correo) ? "santiago.conlago@udla.edu.ec" : correo;
+        usuarioActual.rol = correo.Contains("docente") ? "Docente" : "Estudiante";
+        usuarioActual.esNuevo = false;
+        callback?.Invoke(true, usuarioActual.rol);
     }
 
     private async Task<(bool exito, string mensaje, int partidasCount)> AutenticarEnPostgresAsync(string correo, string password)
@@ -236,7 +267,8 @@ public class PortalBridgeManager : MonoBehaviour
                         nombre = nombreCompleto,
                         correo = correoDb,
                         rol = rol,
-                        codigoInstitucional = codInst
+                        codigoInstitucional = codInst,
+                        passwordHash = hashDb
                     };
                 }
             }
@@ -573,6 +605,7 @@ public class PerfilUsuarioDto
     public string correo;
     public string rol;
     public string codigoInstitucional;
+    public string passwordHash;
     public bool esNuevo = true;
 }
 

@@ -4459,7 +4459,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &299616627
 RectTransform:
   m_ObjectHideFlags: 0
@@ -31162,7 +31162,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a818cf582916c3c4191a3b72870087b8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PortalBridgeManager
-  cadenaConexionPostgres: Host=ep-fragrant-tree-b5zv9zsg-pooler.c-7.us-east-2.aws.neon.tech; Database=neondb; Username=neondb_owner; Password=npg_Lb2SnucAoPT5; SSL Mode=Require; Trust Server Certificate=true;
+  cadenaConexionPostgres: Host=ep-fragrant-tree-b5zv9zsg-pooler.c-7.us-east-2.aws.neon.tech; Database=neondb; Username=neondb_owner; Password=npg_Lb2SnucAoPT5; SSL Mode=Require; Trust Server Certificate=true; Timeout=4; Command Timeout=5;
   usarModoOffline: 0
   timeoutSegundos: 2
   usuarioActual:
@@ -31173,6 +31173,7 @@ MonoBehaviour:
     correo: 
     rol: 
     codigoInstitucional: 
+    esNuevo: 1
   escenarioActivo:
     escenarioId: 0
     escenarioIdGuid: 
@@ -31195,7 +31196,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 92e08b3024783514d942dabea236c31f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DatabaseManager
-  urlPortalDocente: https://localhost:7143
+  nombreArchivoSqlite: gestion_logistica.db
 --- !u!1 &1638625095
 GameObject:
   m_ObjectHideFlags: 0
