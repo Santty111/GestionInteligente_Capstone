@@ -21879,7 +21879,9 @@ MonoBehaviour:
   btnSalir: {fileID: 1769312464}
   panelMainMenu: {fileID: 1231876825}
   panelInicioJuego: {fileID: 299616626}
+  panelOficina: {fileID: 337293948}
   modalOpciones: {fileID: 0}
+  forzarModoNuevo: 0
 --- !u!114 &1231876830
 MonoBehaviour:
   m_ObjectHideFlags: 0

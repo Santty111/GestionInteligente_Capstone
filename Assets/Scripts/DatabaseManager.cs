@@ -281,23 +281,113 @@ public class DatabaseManager : MonoBehaviour
         {
             using (var db = new SQLiteConnection(rutaBaseDatosSqlite))
             {
+                string uId = !string.IsNullOrEmpty(perfil.usuarioIdGuid) ? perfil.usuarioIdGuid : Guid.NewGuid().ToString();
+                var usuarioExistente = db.Find<UsuarioLocal>(uId);
+                int bienvenida = usuarioExistente != null ? usuarioExistente.BienvenidaCompletada : (perfil.esNuevo ? 0 : 1);
+
                 var usuario = new UsuarioLocal
                 {
-                    Id = !string.IsNullOrEmpty(perfil.usuarioIdGuid) ? perfil.usuarioIdGuid : Guid.NewGuid().ToString(),
+                    Id = uId,
                     Correo = perfil.correo,
                     NombreCompleto = perfil.nombre,
                     Rol = perfil.rol,
                     CodigoInstitucional = perfil.codigoInstitucional,
-                    UltimoAcceso = DateTime.UtcNow.ToString("o")
+                    UltimoAcceso = DateTime.UtcNow.ToString("o"),
+                    BienvenidaCompletada = bienvenida
                 };
 
                 db.InsertOrReplace(usuario);
-                Debug.Log($"[SQLite] Usuario '{usuario.NombreCompleto}' cacheado localmente.");
+                Debug.Log($"[SQLite] Usuario '{usuario.NombreCompleto}' cacheado localmente. Bienvenida completada: {bienvenida == 1}");
             }
         }
         catch (Exception ex)
         {
             Debug.LogWarning($"[SQLite] No se pudo cachear el usuario local: {ex.Message}");
+        }
+    }
+
+    // --- ESTADO DE BIENVENIDA / USUARIO NUEVO ---
+
+    public bool EsUsuarioNuevo(string usuarioId, string correo)
+    {
+        try
+        {
+            using (var db = new SQLiteConnection(rutaBaseDatosSqlite))
+            {
+                // Si el estudiante ya tiene partidas guardadas, definitivamente ya ha jugado
+                if (!string.IsNullOrEmpty(usuarioId))
+                {
+                    int cantPartidas = db.Table<PartidaLocal>().Where(p => p.EstudianteId == usuarioId).Count();
+                    if (cantPartidas > 0) return false;
+                }
+
+                // Buscar usuario en caché local
+                UsuarioLocal u = null;
+                if (!string.IsNullOrEmpty(usuarioId))
+                {
+                    u = db.Find<UsuarioLocal>(usuarioId);
+                }
+                if (u == null && !string.IsNullOrEmpty(correo))
+                {
+                    u = db.Table<UsuarioLocal>().FirstOrDefault(x => x.Correo.ToLower() == correo.ToLower());
+                }
+
+                if (u != null && u.BienvenidaCompletada == 1)
+                {
+                    return false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[SQLite] Error consultando si el usuario es nuevo: {ex.Message}");
+        }
+
+        return true;
+    }
+
+    public void MarcarBienvenidaCompletada(string usuarioId, string correo)
+    {
+        try
+        {
+            using (var db = new SQLiteConnection(rutaBaseDatosSqlite))
+            {
+                UsuarioLocal u = null;
+                if (!string.IsNullOrEmpty(usuarioId))
+                {
+                    u = db.Find<UsuarioLocal>(usuarioId);
+                }
+                if (u == null && !string.IsNullOrEmpty(correo))
+                {
+                    u = db.Table<UsuarioLocal>().FirstOrDefault(x => x.Correo.ToLower() == correo.ToLower());
+                }
+
+                if (u != null)
+                {
+                    u.BienvenidaCompletada = 1;
+                    u.UltimoAcceso = DateTime.UtcNow.ToString("o");
+                    db.Update(u);
+                    Debug.Log($"<color=cyan>[SQLite] Usuario '{u.NombreCompleto}' marcado con BienvenidaCompletada = 1.</color>");
+                }
+                else if (!string.IsNullOrEmpty(usuarioId))
+                {
+                    db.Insert(new UsuarioLocal
+                    {
+                        Id = usuarioId,
+                        Correo = correo ?? "",
+                        NombreCompleto = PortalBridgeManager.Instance?.usuarioActual?.nombre ?? "Estudiante",
+                        Rol = PortalBridgeManager.Instance?.usuarioActual?.rol ?? "Estudiante",
+                        CodigoInstitucional = PortalBridgeManager.Instance?.usuarioActual?.codigoInstitucional ?? "",
+                        UltimoAcceso = DateTime.UtcNow.ToString("o"),
+                        BienvenidaCompletada = 1
+                    });
+                    Debug.Log($"<color=cyan>[SQLite] Nuevo usuario {usuarioId} creado y marcado con BienvenidaCompletada = 1.</color>");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[SQLite] Error al marcar bienvenida completada: {ex.Message}");
         }
     }
 

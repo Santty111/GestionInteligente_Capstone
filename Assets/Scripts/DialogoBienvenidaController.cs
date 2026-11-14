@@ -121,12 +121,44 @@ public class DialogoBienvenidaController : MonoBehaviour
     {
         ReproducirSonido(clipBotonFinal);
 
+        MarcarBienvenidaCompletada();
+
         // Encender primero la oficina y después apagar el panel de bienvenida
         if (panelOficina != null)
             panelOficina.SetActive(true);
 
         if (panelInicioJuego != null)
             panelInicioJuego.SetActive(false);
+    }
+
+    private void MarcarBienvenidaCompletada()
+    {
+        string usuarioId = PortalBridgeManager.Instance?.usuarioActual?.usuarioIdGuid;
+        string correo = PortalBridgeManager.Instance?.usuarioActual?.correo;
+
+        // 1. Guardar en PlayerPrefs
+        if (!string.IsNullOrEmpty(usuarioId))
+            PlayerPrefs.SetInt("BienvenidaCompletada_" + usuarioId, 1);
+
+        if (!string.IsNullOrEmpty(correo))
+            PlayerPrefs.SetInt("BienvenidaCompletada_" + correo.ToLower(), 1);
+
+        PlayerPrefs.SetInt("BienvenidaCompletada_Global", 1);
+        PlayerPrefs.Save();
+
+        // 2. Notificar a PortalBridgeManager
+        if (PortalBridgeManager.Instance != null && PortalBridgeManager.Instance.usuarioActual != null)
+        {
+            PortalBridgeManager.Instance.usuarioActual.esNuevo = false;
+        }
+
+        // 3. Persistir en SQLite local
+        if (DatabaseManager.Instancia != null)
+        {
+            DatabaseManager.Instancia.MarcarBienvenidaCompletada(usuarioId, correo);
+        }
+
+        Debug.Log("<color=green>[DialogoBienvenida] Inducción completada. Usuario marcado como 'ya ingresado'.</color>");
     }
 
     private void ReproducirSonido(AudioClip clip)

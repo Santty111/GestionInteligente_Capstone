@@ -100,7 +100,16 @@ public class PortalBridgeManager : MonoBehaviour
         {
             usuarioActual.correo = string.IsNullOrEmpty(correo) ? "santiago.conlago@udla.edu.ec" : correo;
             usuarioActual.rol = correo.Contains("docente") ? "Docente" : "Estudiante";
-            Debug.Log($"[Modo Offline] Login simulado exitoso como: {usuarioActual.rol}");
+
+            // Determinar si es usuario nuevo en modo offline
+            bool bienvenidaCompletada = PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.correo.ToLower(), 0) == 1
+                                     || PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.usuarioIdGuid, 0) == 1;
+            bool esNuevoSqlite = DatabaseManager.Instancia == null || DatabaseManager.Instancia.EsUsuarioNuevo(usuarioActual.usuarioIdGuid, usuarioActual.correo);
+            usuarioActual.esNuevo = !bienvenidaCompletada && esNuevoSqlite;
+
+            DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
+
+            Debug.Log($"[Modo Offline] Login simulado exitoso como: {usuarioActual.rol}. ¿Es nuevo?: {usuarioActual.esNuevo}");
             callback?.Invoke(true, usuarioActual.rol);
             return;
         }
@@ -235,6 +244,45 @@ public class PortalBridgeManager : MonoBehaviour
 
             // Cargar escenario activo desde la base de datos
             await CargarEscenarioActivoAsync(conn);
+
+            // Verificar si el usuario ya tiene partidas registradas en Neon
+            int partidasCount = 0;
+            if (!string.IsNullOrEmpty(usuarioActual.estudianteIdGuid) && Guid.TryParse(usuarioActual.estudianteIdGuid, out Guid estGuid))
+            {
+                try
+                {
+                    using (var cmdPartidas = new NpgsqlCommand("SELECT COUNT(*) FROM partidas WHERE estudiante_id = @estId;", conn))
+                    {
+                        cmdPartidas.Parameters.AddWithValue("@estId", estGuid);
+                        var countRes = await cmdPartidas.ExecuteScalarAsync();
+                        if (countRes != null && int.TryParse(countRes.ToString(), out int c))
+                        {
+                            partidasCount = c;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Neon DB] No se pudo verificar partidas en la nube: {ex.Message}");
+                }
+            }
+
+            // Verificar si completó inducción en PlayerPrefs o SQLite local
+            bool bienvenidaCompletadaPrefs = 
+                PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.correo.ToLower(), 0) == 1 ||
+                PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.usuarioIdGuid, 0) == 1;
+
+            bool esNuevoSqlite = DatabaseManager.Instancia == null || DatabaseManager.Instancia.EsUsuarioNuevo(usuarioActual.usuarioIdGuid, usuarioActual.correo);
+
+            usuarioActual.esNuevo = (partidasCount == 0) && !bienvenidaCompletadaPrefs && esNuevoSqlite;
+
+            Debug.Log($"<color=cyan>[Neon DB] Usuario verificado: {usuarioActual.nombre}. Partidas en nube: {partidasCount}. ¿Es nuevo?: {usuarioActual.esNuevo}</color>");
+
+            // Cachear usuario localmente en SQLite
+            EjecutarEnHiloPrincipal(() =>
+            {
+                DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
+            });
 
             // Registrar último acceso
             try
@@ -527,6 +575,7 @@ public class PerfilUsuarioDto
     public string correo;
     public string rol;
     public string codigoInstitucional;
+    public bool esNuevo = true;
 }
 
 [Serializable]

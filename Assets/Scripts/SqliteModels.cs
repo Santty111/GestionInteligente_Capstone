@@ -14,6 +14,7 @@ public class UsuarioLocal
     public string Rol { get; set; }
     public string CodigoInstitucional { get; set; }
     public string UltimoAcceso { get; set; }
+    public int BienvenidaCompletada { get; set; } // 0 = Pendiente (Nuevo), 1 = Completada (Ya ingresado)
 }
 
 [Table("escenarios")]
