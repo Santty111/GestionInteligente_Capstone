@@ -137,6 +137,10 @@ public class PortalBridgeManager : MonoBehaviour
                         DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
 
                         Debug.Log($"<color=green>[Neon DB] Login exitoso para {usuarioActual.nombre} ({usuarioActual.correo}) con rol {usuarioActual.rol}</color>");
+
+                        // 3. Sincronizar automáticamente cualquier partida pendiente acumulada en modo offline
+                        DatabaseManager.Instancia?.SincronizarPartidasPendientes();
+
                         callback?.Invoke(true, usuarioActual.rol);
                     }
                     else
@@ -378,9 +382,10 @@ public class PortalBridgeManager : MonoBehaviour
     {
         historialLocal.Add(resultado);
 
-        if (usarModoOffline)
+        if (usarModoOffline || Application.internetReachability == NetworkReachability.NotReachable)
         {
-            onCompletado?.Invoke(true);
+            Debug.LogWarning("[PortalBridgeManager] Sin conexión a internet o modo offline activo. La partida se guardó localmente (pendiente de sincronización).");
+            onCompletado?.Invoke(false);
             return;
         }
 
@@ -392,13 +397,20 @@ public class PortalBridgeManager : MonoBehaviour
                 {
                     await conn.OpenAsync();
 
-                    Guid partidaId = Guid.NewGuid();
+                    Guid partidaId = (!string.IsNullOrEmpty(resultado.partidaIdGuid) && Guid.TryParse(resultado.partidaIdGuid, out var pId) && pId != Guid.Empty)
+                        ? pId
+                        : Guid.NewGuid();
                     Guid kpiId = Guid.NewGuid();
                     Guid resultadoPartidaId = Guid.NewGuid();
+                    string idempotency = !string.IsNullOrEmpty(resultado.idempotencyKey) ? resultado.idempotencyKey : Guid.NewGuid().ToString();
 
                     // Obtener o resolver estudiante_id
                     Guid estGuid;
-                    if (!Guid.TryParse(usuarioActual?.estudianteIdGuid, out estGuid) || estGuid == Guid.Empty)
+                    if (!string.IsNullOrEmpty(resultado.estudianteIdGuid) && Guid.TryParse(resultado.estudianteIdGuid, out var rEstGuid) && rEstGuid != Guid.Empty)
+                    {
+                        estGuid = rEstGuid;
+                    }
+                    else if (!Guid.TryParse(usuarioActual?.estudianteIdGuid, out estGuid) || estGuid == Guid.Empty)
                     {
                         // Buscar si existe estudiante con este usuario
                         if (usuarioActual != null && Guid.TryParse(usuarioActual.usuarioIdGuid, out var uGuid))
@@ -441,6 +453,8 @@ public class PortalBridgeManager : MonoBehaviour
                         }
                     }
 
+                    DateTime fechaCreacion = DateTime.TryParse(resultado.fecha, out var dt) ? dt : DateTime.UtcNow;
+
                     using (var trans = await conn.BeginTransactionAsync())
                     {
                         try
@@ -454,8 +468,9 @@ public class PortalBridgeManager : MonoBehaviour
                                 ) VALUES (
                                     @id, @estId, @nivelId, @idempotency,
                                     1, 'local'::origen_registro_enum, 'sincronizado'::sync_status_enum,
-                                    NOW(), NOW(), true, false
-                                );
+                                    @fechaCreacion, NOW(), true, false
+                                )
+                                ON CONFLICT (idempotency_key) DO NOTHING;
                             ";
 
                             using (var cmd = new NpgsqlCommand(insertPartida, conn, trans))
@@ -463,7 +478,8 @@ public class PortalBridgeManager : MonoBehaviour
                                 cmd.Parameters.AddWithValue("@id", partidaId);
                                 cmd.Parameters.AddWithValue("@estId", estGuid);
                                 cmd.Parameters.AddWithValue("@nivelId", nivelGuid);
-                                cmd.Parameters.AddWithValue("@idempotency", Guid.NewGuid().ToString());
+                                cmd.Parameters.AddWithValue("@idempotency", idempotency);
+                                cmd.Parameters.AddWithValue("@fechaCreacion", fechaCreacion);
                                 await cmd.ExecuteNonQueryAsync();
                             }
 
@@ -474,8 +490,9 @@ public class PortalBridgeManager : MonoBehaviour
                                     utilizacion_recursos, eficiencia_rutas, puntuacion_global, fecha_creacion
                                 ) VALUES (
                                     @id, @partidaId, @costo, @entregas, 
-                                    @recursos, @eficiencia, @puntaje, NOW()
-                                );
+                                    @recursos, @eficiencia, @puntaje, @fechaCreacion
+                                )
+                                ON CONFLICT (partida_id) DO NOTHING;
                             ";
 
                             using (var cmd = new NpgsqlCommand(insertKpi, conn, trans))
@@ -487,6 +504,7 @@ public class PortalBridgeManager : MonoBehaviour
                                 cmd.Parameters.AddWithValue("@recursos", (decimal)resultado.utilizacionRecursosPct);
                                 cmd.Parameters.AddWithValue("@eficiencia", (decimal)resultado.eficienciaRutasPct);
                                 cmd.Parameters.AddWithValue("@puntaje", (decimal)Math.Round(resultado.puntajeFinal, 2));
+                                cmd.Parameters.AddWithValue("@fechaCreacion", fechaCreacion);
                                 await cmd.ExecuteNonQueryAsync();
                             }
 
@@ -495,8 +513,9 @@ public class PortalBridgeManager : MonoBehaviour
                                 INSERT INTO resultados_partida (
                                     id, estudiante_id, kpi_id, generado_en
                                 ) VALUES (
-                                    @id, @estId, @kpiId, NOW()
-                                );
+                                    @id, @estId, @kpiId, @fechaCreacion
+                                )
+                                ON CONFLICT (kpi_id) DO NOTHING;
                             ";
 
                             using (var cmd = new NpgsqlCommand(insertResultado, conn, trans))
@@ -504,6 +523,7 @@ public class PortalBridgeManager : MonoBehaviour
                                 cmd.Parameters.AddWithValue("@id", resultadoPartidaId);
                                 cmd.Parameters.AddWithValue("@estId", estGuid);
                                 cmd.Parameters.AddWithValue("@kpiId", kpiId);
+                                cmd.Parameters.AddWithValue("@fechaCreacion", fechaCreacion);
                                 await cmd.ExecuteNonQueryAsync();
                             }
 
@@ -512,7 +532,7 @@ public class PortalBridgeManager : MonoBehaviour
                             EjecutarEnHiloPrincipal(() =>
                             {
                                 Debug.Log($"<color=green>[Neon DB] ¡PARTIDA Y RESULTADOS PUBLICADOS EXITOSAMENTE!</color>");
-                                Debug.Log($"[Neon DB] Partida: {partidaId} | KPIs: {kpiId} | Puntaje: {resultado.puntajeFinal:N1} pts | Costo: ${resultado.costoTotal:N2}");
+                                Debug.Log($"[Neon DB] Partida: {partidaId} | Estudiante: {estGuid} | Puntaje: {resultado.puntajeFinal:N1} pts | Costo: ${resultado.costoTotal:N2}");
                                 onCompletado?.Invoke(true);
                             });
                         }
@@ -528,7 +548,7 @@ public class PortalBridgeManager : MonoBehaviour
             {
                 EjecutarEnHiloPrincipal(() =>
                 {
-                    Debug.LogError($"[Neon DB] Error guardando partida en Neon: {ex.Message}\n{ex.StackTrace}");
+                    Debug.LogError($"[Neon DB] Error guardando partida en Neon: {ex.Message}");
                     onCompletado?.Invoke(false);
                 });
             }
@@ -625,6 +645,9 @@ public class ConfiguracionEscenarioDto
 [Serializable]
 public class ResultadoPartidaDto
 {
+    public string partidaIdGuid;
+    public string estudianteIdGuid;
+    public string idempotencyKey;
     public int estudianteId;
     public string nombreEstudiante;
     public string ruta;

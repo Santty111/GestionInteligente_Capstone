@@ -60,6 +60,48 @@ public class DatabaseManager : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        // Iniciar monitoreo continuo de conectividad para sincronización automática offline -> online
+        StartCoroutine(MonitorearConectividadYSincronizar());
+    }
+
+    private IEnumerator MonitorearConectividadYSincronizar()
+    {
+        var espera = new WaitForSeconds(8f);
+        while (true)
+        {
+            yield return espera;
+
+            if (Application.internetReachability != NetworkReachability.NotReachable &&
+                PortalBridgeManager.Instance != null &&
+                !PortalBridgeManager.Instance.usarModoOffline)
+            {
+                int pendientes = ObtenerCantidadPartidasPendientes();
+                if (pendientes > 0)
+                {
+                    Debug.Log($"<color=cyan>[Sync Monitor] Detectada conexión a internet y {pendientes} partida(s) pendiente(s) en SQLite. Sincronizando con Neon...</color>");
+                    SincronizarPartidasPendientes();
+                }
+            }
+        }
+    }
+
+    public int ObtenerCantidadPartidasPendientes()
+    {
+        try
+        {
+            using (var db = new SQLiteConnection(rutaBaseDatosSqlite))
+            {
+                return db.Table<PartidaLocal>().Where(p => p.Sincronizado == 0).Count();
+            }
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     // --- INICIALIZACIÓN DE SQLITE ---
 
     private void InicializarBaseDatosSqlite()
@@ -169,11 +211,14 @@ public class DatabaseManager : MonoBehaviour
         // 2. Respaldo adicional en JSON
         GuardarRespaldoJson(nuevaPartida);
 
-        // 3. Sincronizar con Neon PostgreSQL si hay conexión
-        if (PortalBridgeManager.Instance != null && !PortalBridgeManager.Instance.usarModoOffline)
+        // 3. Sincronizar con Neon PostgreSQL si hay conexión a internet disponible
+        if (PortalBridgeManager.Instance != null && !PortalBridgeManager.Instance.usarModoOffline && Application.internetReachability != NetworkReachability.NotReachable)
         {
             var resultadoDto = new ResultadoPartidaDto
             {
+                partidaIdGuid = partidaId,
+                estudianteIdGuid = PortalBridgeManager.Instance.usuarioActual?.estudianteIdGuid ?? "30000000-0000-0000-0000-000000000001",
+                idempotencyKey = Guid.NewGuid().ToString(),
                 nombreEstudiante = PortalBridgeManager.Instance.usuarioActual?.nombre ?? "Estudiante",
                 ruta = nuevaPartida.escenario,
                 dificultad = "facil",
@@ -193,12 +238,19 @@ public class DatabaseManager : MonoBehaviour
                     nuevaPartida.sincronizadoConPortal = true;
                     MarcarPartidaSincronizadaEnSqlite(partidaId);
                     Debug.Log("<color=green>[DatabaseManager] ¡Partida sincronizada exitosamente con Neon PostgreSQL!</color>");
+                    
+                    // Sincronizar cualquier otra partida que haya quedado pendiente de sesiones offline previas
+                    SincronizarPartidasPendientes();
                 }
                 else
                 {
-                    Debug.LogWarning("[DatabaseManager] No se pudo sincronizar en la nube. La partida quedó guardada en SQLite para sincronizarse luego.");
+                    Debug.LogWarning("[DatabaseManager] No se pudo sincronizar en la nube en este momento. La partida quedó guardada en SQLite para sincronizarse luego.");
                 }
             });
+        }
+        else
+        {
+            Debug.LogWarning("[DatabaseManager] Modo offline o sin internet. La partida se guardó localmente en SQLite y se sincronizará cuando regrese la conexión.");
         }
     }
 
@@ -213,7 +265,7 @@ public class DatabaseManager : MonoBehaviour
                 {
                     partida.Sincronizado = 1;
                     db.Update(partida);
-                    Debug.Log($"[SQLite] Partida {partidaId} marcada como SINCRONIZADA.");
+                    Debug.Log($"<color=green>[SQLite] Partida {partidaId} marcada como SINCRONIZADA en SQLite.</color>");
                 }
             }
         }
@@ -234,21 +286,42 @@ public class DatabaseManager : MonoBehaviour
             return;
         }
 
+        if (Application.internetReachability == NetworkReachability.NotReachable)
+        {
+            Debug.LogWarning("[SQLite Sync] Sin conexión a internet. Se sincronizará automáticamente cuando regrese la conexión.");
+            return;
+        }
+
         try
         {
             using (var db = new SQLiteConnection(rutaBaseDatosSqlite))
             {
                 var pendientes = db.Table<PartidaLocal>().Where(p => p.Sincronizado == 0).ToList();
-                Debug.Log($"[SQLite Sync] Se encontraron {pendientes.Count} partidas pendientes de sincronizar.");
+                if (pendientes.Count == 0) return;
+
+                Debug.Log($"<color=cyan>[SQLite Sync] Sincronizando {pendientes.Count} partida(s) pendiente(s) acumuladas offline con Neon PostgreSQL...</color>");
 
                 foreach (var p in pendientes)
                 {
                     var kpi = db.Table<KpiLocal>().FirstOrDefault(k => k.PartidaId == p.Id);
                     if (kpi != null)
                     {
+                        string nombreJugador = PortalBridgeManager.Instance.usuarioActual?.nombre ?? "Estudiante";
+                        if (!string.IsNullOrEmpty(p.EstudianteId))
+                        {
+                            var uLocal = db.Table<UsuarioLocal>().FirstOrDefault(u => u.EstudianteIdGuid == p.EstudianteId || u.Id == p.EstudianteId);
+                            if (uLocal != null && !string.IsNullOrEmpty(uLocal.NombreCompleto))
+                            {
+                                nombreJugador = uLocal.NombreCompleto;
+                            }
+                        }
+
                         var resultadoDto = new ResultadoPartidaDto
                         {
-                            nombreEstudiante = PortalBridgeManager.Instance.usuarioActual?.nombre ?? "Estudiante",
+                            partidaIdGuid = p.Id,
+                            estudianteIdGuid = p.EstudianteId,
+                            idempotencyKey = !string.IsNullOrEmpty(p.IdempotencyKey) ? p.IdempotencyKey : Guid.NewGuid().ToString(),
+                            nombreEstudiante = nombreJugador,
                             ruta = p.EscenarioNombre,
                             dificultad = "facil",
                             costoTotal = kpi.CostoTotal,
@@ -266,6 +339,11 @@ public class DatabaseManager : MonoBehaviour
                             if (subido)
                             {
                                 MarcarPartidaSincronizadaEnSqlite(idActual);
+                                Debug.Log($"<color=green>[SQLite Sync] ¡Partida offline {idActual} sincronizada exitosamente en Neon!</color>");
+                            }
+                            else
+                            {
+                                Debug.LogWarning($"[SQLite Sync] No se pudo sincronizar la partida {idActual}. Queda en cola para el próximo intento.");
                             }
                         });
                     }
