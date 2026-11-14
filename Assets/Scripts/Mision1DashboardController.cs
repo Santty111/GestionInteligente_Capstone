@@ -41,20 +41,40 @@ public class Mision1DashboardController : MonoBehaviour
         if (flujoController == null)
             flujoController = FindObjectOfType<Mision1FlujoController>(true);
 
-        if (btnFinalizarJuego != null)
-        {
-            btnFinalizarJuego.onClick.RemoveAllListeners();
-            btnFinalizarJuego.onClick.AddListener(FinalizarYVolverAMisiones);
-        }
+        AsegurarBotonFinalizar();
 
         ConfigurarImagenEstrellas(imgEstrellasTiempo);
         ConfigurarImagenEstrellas(imgEstrellasRecursos);
         ConfigurarImagenEstrellas(imgEstrellasRutas);
     }
 
+    private void Start()
+    {
+        AsegurarBotonFinalizar();
+    }
+
     private void OnEnable()
     {
         CalcularYMostrarResultados();
+        AsegurarBotonFinalizar();
+    }
+
+    private void AsegurarBotonFinalizar()
+    {
+        if (btnFinalizarJuego != null)
+        {
+            btnFinalizarJuego.onClick.RemoveAllListeners();
+            btnFinalizarJuego.onClick.AddListener(FinalizarYVolverAMisiones);
+        }
+        else if (panelDashboard != null)
+        {
+            btnFinalizarJuego = panelDashboard.GetComponentInChildren<Button>(true);
+            if (btnFinalizarJuego != null)
+            {
+                btnFinalizarJuego.onClick.RemoveAllListeners();
+                btnFinalizarJuego.onClick.AddListener(FinalizarYVolverAMisiones);
+            }
+        }
     }
 
     private void ConfigurarImagenEstrellas(Image img)
@@ -270,10 +290,49 @@ public class Mision1DashboardController : MonoBehaviour
 
     public void FinalizarYVolverAMisiones()
     {
+        Debug.Log("<color=green>[Dashboard] Botón de final presionado. Regresando al Grid de Misiones...</color>");
+
+        // 1. Apagar el panel de resultados Dashboard (Panel 6)
         if (panelDashboard != null)
+        {
             panelDashboard.SetActive(false);
+        }
+        else
+        {
+            var dash = GameObject.Find("6_Panel_Dashboard");
+            if (dash != null) dash.SetActive(false);
+        }
+
+        // 2. Apagar el panel de Misión 1 (Panel 5)
+        var panelMision1 = GameObject.Find("5_Panel_Mision1_Importacion");
+        if (panelMision1 != null)
+        {
+            panelMision1.SetActive(false);
+        }
+        else if (gameObject != null && gameObject.name.Contains("Mision1"))
+        {
+            gameObject.SetActive(false);
+        }
+
+        // 3. Encender la oficina y abrir la laptop con el grid de misiones
+        var oficina = FindAnyObjectByType<OficinaSistemaTMSController>(FindObjectsInactive.Include);
+        if (oficina != null)
+        {
+            if (oficina.panelOficina != null)
+                oficina.panelOficina.SetActive(true);
+            else
+                oficina.gameObject.SetActive(true);
+
+            oficina.AbrirLaptop();
+        }
+
+        // 4. Si el flujoController está activo, ejecutar su rutina de limpieza y reinicio
+        if (flujoController == null)
+            flujoController = FindAnyObjectByType<Mision1FlujoController>(FindObjectsInactive.Include);
 
         if (flujoController != null)
+        {
             flujoController.RegresarAlMenuMisiones();
+        }
     }
 }

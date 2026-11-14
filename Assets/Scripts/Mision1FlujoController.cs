@@ -13,7 +13,7 @@ public class Mision1FlujoController : MonoBehaviour
     [Header("2. HUD de Presupuesto")]
     public GameObject hudPresupuesto;           // Arrastra: Badge_Presupuesto
     public TMP_Text txtPresupuestoValor;        // Arrastra: Txt_Presupuesto_Valor
-    public float presupuestoInicial = 45000f;   // Presupuesto asignado
+    public float presupuestoInicial = 60000f;   // Presupuesto asignado
     private float presupuestoActual;
     private float totalGastado;
 
@@ -166,20 +166,43 @@ public class Mision1FlujoController : MonoBehaviour
 
     public void RegresarAlMenuMisiones()
     {
+        // 1. Ocultar HUD de presupuesto
         if (hudPresupuesto != null)
             hudPresupuesto.SetActive(false);
 
+        // 2. Ocultar panel de Misión 1 completa
         if (panelMision1Completo != null)
             panelMision1Completo.SetActive(false);
+        else
+            gameObject.SetActive(false);
 
-        if (panelOficinaCompleto != null)
-            panelOficinaCompleto.SetActive(true);
+        // 3. Reiniciar subpaneles de la misión para que al volver a entrar empiece limpia
+        ReiniciarEstadoInicialMision();
 
-        if (modalLaptopOficina != null)
-            modalLaptopOficina.SetActive(true);
+        // 4. Encender Oficina y abrir la laptop con el grid de misiones
+        var oficina = FindAnyObjectByType<OficinaSistemaTMSController>(FindObjectsInactive.Include);
+        if (oficina != null)
+        {
+            if (oficina.panelOficina != null)
+                oficina.panelOficina.SetActive(true);
+            else if (panelOficinaCompleto != null)
+                panelOficinaCompleto.SetActive(true);
 
-        if (gridMisiones != null)
-            gridMisiones.SetActive(true);
+            oficina.AbrirLaptop();
+        }
+        else
+        {
+            if (panelOficinaCompleto != null)
+                panelOficinaCompleto.SetActive(true);
+
+            if (modalLaptopOficina != null)
+                modalLaptopOficina.SetActive(true);
+
+            if (gridMisiones != null)
+                gridMisiones.SetActive(true);
+        }
+
+        Debug.Log("<color=green>[Mision1FlujoController] Regreso exitoso a la Oficina y al Grid de Misiones.</color>");
     }
 
     public void AvanzarDialogo()
