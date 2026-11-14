@@ -125,6 +125,21 @@ public class PortalBridgeManager : MonoBehaviour
                 {
                     if (resultadoLogin.exito)
                     {
+                        // 1. Verificar en hilo principal PlayerPrefs y SQLite local (prohibido en hilos secundarios)
+                        bool bienvenidaCompletadaPrefs = 
+                            PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.correo.ToLower(), 0) == 1 ||
+                            PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.usuarioIdGuid, 0) == 1;
+
+                        bool esNuevoSqlite = DatabaseManager.Instancia == null || DatabaseManager.Instancia.EsUsuarioNuevo(usuarioActual.usuarioIdGuid, usuarioActual.correo);
+
+                        // Si tiene partidas en la nube, o completó en PlayerPrefs, o completó en SQLite -> No es nuevo
+                        usuarioActual.esNuevo = (resultadoLogin.partidasCount == 0) && !bienvenidaCompletadaPrefs && esNuevoSqlite;
+
+                        Debug.Log($"<color=cyan>[Neon DB] Usuario verificado: {usuarioActual.nombre}. Partidas en nube: {resultadoLogin.partidasCount}. ¿Es nuevo?: {usuarioActual.esNuevo}</color>");
+
+                        // 2. Cachear usuario localmente en SQLite
+                        DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
+
                         Debug.Log($"<color=green>[Neon DB] Login exitoso para {usuarioActual.nombre} ({usuarioActual.correo}) con rol {usuarioActual.rol}</color>");
                         callback?.Invoke(true, usuarioActual.rol);
                     }
@@ -146,7 +161,7 @@ public class PortalBridgeManager : MonoBehaviour
         });
     }
 
-    private async Task<(bool exito, string mensaje)> AutenticarEnPostgresAsync(string correo, string password)
+    private async Task<(bool exito, string mensaje, int partidasCount)> AutenticarEnPostgresAsync(string correo, string password)
     {
         using (var conn = new NpgsqlConnection(cadenaConexionPostgres))
         {
@@ -172,7 +187,7 @@ public class PortalBridgeManager : MonoBehaviour
                 {
                     if (!await reader.ReadAsync())
                     {
-                        return (false, "El correo electrónico no se encuentra registrado.");
+                        return (false, "El correo electrónico no se encuentra registrado.", 0);
                     }
 
                     var userId = reader.GetGuid(0);
@@ -186,7 +201,7 @@ public class PortalBridgeManager : MonoBehaviour
 
                     if (!activo)
                     {
-                        return (false, "La cuenta de usuario está desactivada.");
+                        return (false, "La cuenta de usuario está desactivada.", 0);
                     }
 
                     // Verificación de contraseña con BCrypt
@@ -209,7 +224,7 @@ public class PortalBridgeManager : MonoBehaviour
 
                     if (!passwordValido)
                     {
-                        return (false, "Contraseña incorrecta.");
+                        return (false, "Contraseña incorrecta.", 0);
                     }
 
                     // Asignar perfil de usuario activo
@@ -267,23 +282,6 @@ public class PortalBridgeManager : MonoBehaviour
                 }
             }
 
-            // Verificar si completó inducción en PlayerPrefs o SQLite local
-            bool bienvenidaCompletadaPrefs = 
-                PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.correo.ToLower(), 0) == 1 ||
-                PlayerPrefs.GetInt("BienvenidaCompletada_" + usuarioActual.usuarioIdGuid, 0) == 1;
-
-            bool esNuevoSqlite = DatabaseManager.Instancia == null || DatabaseManager.Instancia.EsUsuarioNuevo(usuarioActual.usuarioIdGuid, usuarioActual.correo);
-
-            usuarioActual.esNuevo = (partidasCount == 0) && !bienvenidaCompletadaPrefs && esNuevoSqlite;
-
-            Debug.Log($"<color=cyan>[Neon DB] Usuario verificado: {usuarioActual.nombre}. Partidas en nube: {partidasCount}. ¿Es nuevo?: {usuarioActual.esNuevo}</color>");
-
-            // Cachear usuario localmente en SQLite
-            EjecutarEnHiloPrincipal(() =>
-            {
-                DatabaseManager.Instancia?.GuardarUsuarioLocal(usuarioActual);
-            });
-
             // Registrar último acceso
             try
             {
@@ -298,7 +296,7 @@ public class PortalBridgeManager : MonoBehaviour
                 Debug.LogWarning($"[Neon DB] No se pudo actualizar ultimo_acceso_en: {ex.Message}");
             }
 
-            return (true, "OK");
+            return (true, "OK", partidasCount);
         }
     }
 
