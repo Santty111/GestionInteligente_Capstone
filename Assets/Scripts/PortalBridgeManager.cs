@@ -454,7 +454,7 @@ public class PortalBridgeManager : MonoBehaviour
                                 cmd.Parameters.AddWithValue("@entregas", (decimal)resultado.entregasATiempoPct);
                                 cmd.Parameters.AddWithValue("@recursos", (decimal)resultado.utilizacionRecursosPct);
                                 cmd.Parameters.AddWithValue("@eficiencia", (decimal)resultado.eficienciaRutasPct);
-                                cmd.Parameters.AddWithValue("@puntaje", (decimal)resultado.puntajeFinal);
+                                cmd.Parameters.AddWithValue("@puntaje", (decimal)Math.Round(resultado.puntajeFinal, 2));
                                 await cmd.ExecuteNonQueryAsync();
                             }
 
@@ -480,7 +480,7 @@ public class PortalBridgeManager : MonoBehaviour
                             EjecutarEnHiloPrincipal(() =>
                             {
                                 Debug.Log($"<color=green>[Neon DB] ¡PARTIDA Y RESULTADOS PUBLICADOS EXITOSAMENTE!</color>");
-                                Debug.Log($"[Neon DB] Partida: {partidaId} | KPIs: {kpiId} | Puntaje: {resultado.puntajeFinal} pts | Costo: ${resultado.costoTotal:N2}");
+                                Debug.Log($"[Neon DB] Partida: {partidaId} | KPIs: {kpiId} | Puntaje: {resultado.puntajeFinal:N1} pts | Costo: ${resultado.costoTotal:N2}");
                                 onCompletado?.Invoke(true);
                             });
                         }
@@ -601,6 +601,6 @@ public class ResultadoPartidaDto
     public float utilizacionRecursosPct;
     public float eficienciaRutasPct;
     public bool eventoAduanaSuperado;
-    public int puntajeFinal;
+    public float puntajeFinal;
     public string fecha;
 }

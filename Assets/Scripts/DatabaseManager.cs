@@ -175,7 +175,7 @@ public class DatabaseManager : MonoBehaviour
                 utilizacionRecursosPct = nuevaPartida.utilizacionRecursos,
                 eficienciaRutasPct = nuevaPartida.eficienciaRutas,
                 eventoAduanaSuperado = true,
-                puntajeFinal = Mathf.RoundToInt(nuevaPartida.puntajeGlobal),
+                puntajeFinal = (float)Math.Round(nuevaPartida.puntajeGlobal, 2),
                 fecha = nuevaPartida.fecha
             };
 
@@ -249,7 +249,7 @@ public class DatabaseManager : MonoBehaviour
                             utilizacionRecursosPct = kpi.UtilizacionRecursos,
                             eficienciaRutasPct = kpi.EficienciaRutas,
                             eventoAduanaSuperado = true,
-                            puntajeFinal = Mathf.RoundToInt(kpi.PuntuacionGlobal),
+                            puntajeFinal = (float)Math.Round(kpi.PuntuacionGlobal, 2),
                             fecha = p.FechaCreacion
                         };
 

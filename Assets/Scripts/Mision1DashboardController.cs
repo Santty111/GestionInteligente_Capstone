@@ -198,7 +198,7 @@ public class Mision1DashboardController : MonoBehaviour
                 utilizacionRecursosPct = resultadoMision.utilizacionRecursos,
                 eficienciaRutasPct = resultadoMision.eficienciaRutas,
                 eventoAduanaSuperado = true,
-                puntajeFinal = Mathf.RoundToInt(resultadoMision.puntajeGlobal),
+                puntajeFinal = (float)Math.Round(resultadoMision.puntajeGlobal, 2),
                 fecha = resultadoMision.fecha
             };
             PortalBridgeManager.Instance.GuardarResultadoPartida(resultadoDto);
